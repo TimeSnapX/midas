@@ -1,0 +1,34 @@
+// node tests/e2e.mjs [url]  — headless Chrome: scanner loads, no console errors, paper buy+sell, live toggle off by default, screenshots.
+import { createRequire } from "node:module";
+const { chromium } = createRequire("/workspace/tools/package.json")("playwright-core");
+const URL_ = process.argv[2] || "https://timesnapx.github.io/midas/", OUT = process.argv[3] || "/workspace/out";
+const b = await chromium.launch({ executablePath: "/usr/bin/google-chrome", headless: true });
+const page = await b.newPage({ viewport: { width: 420, height: 900 } });
+const errs = []; page.on("pageerror", (e) => errs.push("pageerror " + e.message)); page.on("console", (m) => m.type() === "error" && errs.push("console " + m.text() + " " + JSON.stringify(m.location())));
+const R = {};
+await page.goto(URL_, { waitUntil: "domcontentloaded" });
+await page.waitForFunction(() => window.__midas && [...window.__midas.coins.values()].some((c) => c.heat && c.priceUsd), null, { timeout: 90000 });
+await page.waitForFunction(() => document.querySelector("#status").textContent.startsWith("Live"), null, { timeout: 120000 }).catch(() => {});
+R.scanner = await page.evaluate(() => ({ coins: window.__midas.coins.size, entryReady: [...window.__midas.coins.values()].filter((c) => c.worth).length, status: document.querySelector("#status").textContent, sources: [...document.querySelectorAll("#main .panel small .pill")].map((p) => p.textContent) }));
+await page.screenshot({ path: OUT + "/midas-scanner.png" });
+// paper buy via UI
+await page.click("[data-pbuy]"); await page.fill("#q-amt", "100"); await page.click("#m-ok");
+await page.click('nav [data-tab="portfolio"]'); await page.waitForSelector("[data-psell]");
+R.afterBuy = await page.evaluate(() => ({ cash: window.__midas.S.cash, open: window.__midas.S.positions.length, entry: window.__midas.S.positions[0]?.entry }));
+await page.screenshot({ path: OUT + "/midas-portfolio-open.png" });
+await page.click("[data-psell]"); await page.waitForTimeout(500);
+R.afterSell = await page.evaluate(() => { const S = window.__midas.S; return { cash: S.cash, open: S.positions.length, log: S.log.map((l) => `${l.side} ${l.symbol} ${l.price} ${l.usd.toFixed(2)} pnl=${l.pnl}`) }; });
+R.storageKey = await page.evaluate(() => !!localStorage.getItem("midas.v1"));
+await page.screenshot({ path: OUT + "/midas-portfolio-closed.png", fullPage: true });
+await page.click('nav [data-tab="signals"]'); await page.waitForTimeout(4000);
+R.signals = await page.evaluate(() => document.querySelector("#main").innerText.slice(0, 200));
+await page.screenshot({ path: OUT + "/midas-signals.png" });
+await page.click('nav [data-tab="settings"]'); await page.waitForSelector("#s-live");
+R.live = await page.evaluate(() => ({ checked: document.querySelector("#s-live").checked, stored: window.__midas.S.settings.live, badge: document.querySelector("#modeBadge").textContent, cap: window.__midas.S.settings.capPct, daily: window.__midas.S.settings.dailyLossPct }));
+await page.click("#s-live"); await page.waitForSelector("dialog[open]"); R.confirmDialog = await page.evaluate(() => document.querySelector("dialog h2").textContent);
+await page.screenshot({ path: OUT + "/midas-settings-confirm.png" });
+await page.click("#m-no"); await page.waitForTimeout(300);
+R.liveAfterCancel = await page.evaluate(() => window.__midas.S.settings.live);
+await page.screenshot({ path: OUT + "/midas-settings.png", fullPage: true });
+R.consoleErrors = errs;
+console.log(JSON.stringify(R, null, 2)); await b.close();
