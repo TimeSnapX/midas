@@ -1,1 +1,9 @@
 node_modules/
+
+# Local Midas agent data (written by scan.mjs)
+scan.mjs
+last_scan.json
+live_state.json
+live_trades.csv
+paper_portfolio.json
+trades.csv
