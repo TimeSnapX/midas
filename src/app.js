@@ -3,6 +3,7 @@ import { CONFIG as C, MIDAS as M } from "./config.js";
 import { heatScore, riskScore } from "./score.js";
 import * as A from "./api.js";
 import * as W from "./wallet.js";
+import * as L from "./live.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -137,10 +138,45 @@ function enforceDaily() {
   if (dailyLossSol() >= lim) { S.settings.live = false; S.liveLockDay = bneDay(); save(); toast(`⛔ Daily loss limit (${S.settings.dailyLossPct}%) hit. Switched to PAPER; live mode locked until tomorrow (Brisbane).`); render(); return true; }
   return false;
 }
-async function refreshWallet() {
-  if (!W.wallet.address) return;
-  try { walletSol = await W.solBalance(S.settings.rpc, W.wallet.address); } catch (e) { walletSol = null; toast("RPC balance failed: " + e.message); }
-  solPrice = await W.solUsd(); rollDay(); render();
+let balErr = null, balAt = 0;
+async function refreshWallet(quiet) {
+  if (!W.wallet.address) { renderBadge(); return; }
+  try { walletSol = await W.solBalance(S.settings.rpc, W.wallet.address); balErr = null; balAt = Date.now(); } catch (e) { balErr = e.message; if (!quiet) toast("RPC balance failed: " + e.message); }
+  if (!solPrice || !quiet) solPrice = await W.solUsd(); rollDay(); renderBadge();
+  if (!quiet || tab === "live" || tab === "settings" && !document.activeElement?.matches?.("input")) render();
+}
+const short = (a) => (a ? a.slice(0, 4) + "…" + a.slice(-4) : U);
+const balTxt = () => (walletSol === null ? "balance unknown" : walletSol.toFixed(4) + " SOL");
+function renderBadge() {
+  const b = $("#walletBadge"); if (!b) return; const a = W.wallet.address;
+  b.className = "pill " + (a ? "good" : "mid"); b.dataset.connected = a ? "1" : "0";
+  b.textContent = a ? `● Connected ${short(a)} · ${balTxt()}` : W.injectedProvider() ? "Wallet: not connected" : "Wallet: no Phantom here";
+}
+// Explains WHY the wallet may not appear, plus the right button for this browser.
+function walletHelp() {
+  const a = W.wallet.address, inj = !!W.injectedProvider(), link = W.phantomBrowseLink(location.origin + location.pathname);
+  if (a) return `<div class="wbox ok"><span class="pill good big-pill" id="connBadge">● Connected</span> <code title="${esc(a)}">${esc(short(a))}</code> · <b id="connBal">${balTxt()}</b>${solPrice && walletSol !== null ? " (" + usd(walletSol * solPrice) + ")" : ""} <small class="mut">via ${esc(W.wallet.via)} · balance from RPC, refreshed every 30 s${balAt ? ", last " + new Date(balAt).toLocaleTimeString("en-AU", { timeZone: M.tz }) + " AEST" : ""}${balErr ? " · RPC error: " + esc(balErr) : ""}</small>
+    <div class="row" style="margin-top:6px"><button class="btn small" id="connect">Refresh balance</button><button class="btn small ghost" id="disconnect">Disconnect</button></div></div>`;
+  if (inj) return `<div class="wbox"><span class="pill mid">Not connected</span> Phantom is available in this browser. <button class="btn small" id="connect">Connect Phantom</button></div>`;
+  return `<div class="wbox"><span class="pill mid">No Phantom wallet in this browser</span>
+    <p><b>Why your wallet doesn't show:</b> ${W.isMobile() ? "Chrome on Android (and other phone browsers) cannot see the Phantom <i>mobile app's</i> wallet, even when Phantom says it is connected. The app's wallet only exists inside Phantom's own in-app browser." : "There is no Phantom extension in this browser."} Midas can use it in two ways: open Midas <b>inside Phantom's browser</b> (button below), or use Phantom's embedded <b>Google/Apple login</b>, which needs a Phantom Portal App ID (Connection settings). Midas never asks for a seed phrase or private key.</p>
+    <div class="row"><a class="btn" id="openPhantom" href="${esc(link)}" rel="noopener">Open in Phantom</a>${S.settings.appId ? '<button class="btn ghost" id="connect">Log in with Google (Phantom)</button>' : '<button class="btn ghost" id="connect">Try connect</button>'}</div></div>`;
+}
+const BNE = (t) => (t ? new Date(t).toLocaleString("en-AU", { timeZone: M.tz, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) + " AEST" : U);
+const amt = (v) => (v === null || v === undefined || isNaN(v) ? U : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.abs(v) >= 1e3 ? (v / 1e3).toFixed(2) + "k" : Math.abs(v) >= 1 ? v.toFixed(3) : v.toPrecision(3));
+const tok = (m) => (m ? `<a href="https://solscan.io/token/${esc(m)}" target="_blank" rel="noopener">${esc(L.sym(m) || short(m))}</a>` : U);
+function txRows() {
+  const f = L.txFeed;
+  if (!f.addr) return '<p class="mut">Connect a wallet to see its transactions.</p>';
+  const head = `<small>${esc(f.addr === W.wallet.address ? "Connected wallet" : "Watching")} <code>${esc(short(f.addr))}</code> · RPC ${esc(f.rpc)} · websocket: <b>${esc(f.wsState)}</b> · polling every ${Math.round((f.wsState === "open" ? Math.max(30000, f.interval) : f.interval) / 1000)} s${f.lastPoll ? " · last " + BNE(f.lastPoll) : ""}${f.err ? ` · <span class="neg">RPC error: ${esc(f.err)} (backing off)</span>` : ""}</small>`;
+  if (!f.list.length) return head + `<p class="mut">${f.lastPoll ? "No transactions found." : "Loading transactions…"}</p>`;
+  return head + `<table id="txTable"><tr><th>Time</th><th>Type</th><th>Token</th><th>Amount</th><th>For</th><th></th></tr>${f.list.map((x) => `<tr data-kind="${esc(x.kind)}"><td><small>${BNE(x.t)}</small></td><td><span class="pill ${x.kind === "buy" ? "good" : x.kind === "sell" ? "bad" : x.kind === "unknown" || x.kind === "failed" ? "mid" : ""}">${esc(x.kind)}</span></td><td>${x.main ? tok(x.main.mint) : U}</td><td class="${cls(x.main?.delta)}">${x.main ? (x.main.delta > 0 ? "+" : "") + amt(x.main.delta) : U}</td><td>${x.quote ? amt(Math.abs(x.quote.delta)) + " " + tok(x.quote.mint) : x.kind === "transfer" ? (x.main?.delta > 0 ? "in" : "out") : ""}</td><td><a href="https://solscan.io/tx/${esc(x.sig)}" target="_blank" rel="noopener">Solscan</a></td></tr>`).join("")}</table>`;
+}
+function mktRows() {
+  const k = L.mkt;
+  const head = `<small>GeckoTerminal /pools/{pool}/trades, rotating one pool every 10 s across the top ${k.pools.length || 5} watched coins (${k.pools.map((c) => esc(c.symbol || short(c.mint))).join(", ") || "waiting for scan"}). Shares the GeckoTerminal limiter with the scanner (${A.gtLimiter.max} req/min).${k.err ? ` <span class="neg">Last error: ${esc(k.err)}</span>` : ""}</small>`;
+  if (!k.list.length) return head + '<p class="mut">Loading trades…</p>';
+  return head + `<table id="mktTable"><tr><th>Time</th><th>Coin</th><th>Side</th><th>USD</th><th>Price</th><th>Trader</th></tr>${k.list.slice(0, 80).map((x) => `<tr><td><small>${BNE(x.t)}</small></td><td>${esc(x.symbol || short(x.mint))}</td><td><span class="pill ${x.kind === "buy" ? "good" : x.kind === "sell" ? "bad" : "mid"}">${esc(x.kind || U)}</span></td><td>${usd(x.usd)}</td><td>${price(x.price)}</td><td>${x.trader ? `<a href="https://solscan.io/account/${esc(x.trader)}" target="_blank" rel="noopener">${esc(short(x.trader))}</a>` : U}</td><td>${x.sig ? `<a href="https://solscan.io/tx/${esc(x.sig)}" target="_blank" rel="noopener">tx</a>` : ""}</td></tr>`).join("")}</table>`;
 }
 async function liveBuy(mint) {
   const c = coins.get(mint);
@@ -218,6 +254,10 @@ function render() {
         ${c?.heat ? `<span class="pill">Heat ${c.heat.score}</span><span class="pill">Risk ${c.risk.score}</span>${c.worth ? '<span class="pill gold">ENTRY ✓</span>' : `<small class="mut"> fails: ${esc(c.entry.why.join(" · "))}</small>`}` : '<small class="mut">Live data loading on next scan…</small>'}
         ${p.ca ? ` <button class="btn small" data-pbuy="${esc(p.ca)}">Paper buy</button>` : ""}</div>`; }).join("") : '<p class="empty">No Argus picks in the feed.</p>') +
       `<div class="panel"><h2>Hades trades</h2><small>${tr.length} rows</small><table><tr><th>Time</th><th>Action</th><th>Token</th><th>SOL</th><th>Reason</th></tr>${tr.slice(-30).reverse().map((t) => `<tr><td>${esc(t.time_aest || t.time || "")}</td><td>${esc(t.action || "")}</td><td>${esc(t.symbol || t.token || "")}</td><td>${esc(t.sol ?? t.amount_sol ?? "")}</td><td><small>${esc(t.reason || t.notes || "")}</small></td></tr>`).join("")}</table></div>`;
+  } else if (tab === "live") {
+    m.innerHTML = `<div class="panel"><h2>Wallet</h2>${walletHelp()}</div>
+     <div class="panel"><h2>Wallet transactions (live)</h2><div id="txPanel">${txRows()}</div><small class="mut">Classified from this wallet's token/SOL balance changes: buy = token in for SOL/USDC/USDT, sell = the reverse, swap = token for token, transfer = one asset in or out. Anything else reads "unknown". Newest first, max 100.</small></div>
+     <div class="panel"><h2>Market trades (watched coins)</h2><div id="mktPanel">${mktRows()}</div></div>`;
   } else if (tab === "portfolio") {
     const eq = equity(), pl = eq - S.start, closed = S.log.filter((l) => l.side === "SELL"), wins = closed.filter((l) => l.pnl > 0).length;
     m.innerHTML = `<div class="panel kv"><div><small>Paper equity</small><div class="big">${usd(eq)}</div></div><div><small>Cash</small><div class="big">${usd(S.cash)}</div></div><div><small>P&amp;L</small><div class="big ${cls(pl)}">${pl >= 0 ? "+" : ""}${usd(pl)} (${pct(pl / S.start * 100)})</div></div><div><small>Win rate</small><div class="big">${closed.length ? Math.round(wins / closed.length * 100) + "%" : "–"}</div><small>${closed.length} closed</small></div></div>
@@ -232,9 +272,9 @@ function render() {
       <label><input type="checkbox" id="s-live" ${st.live && !locked ? "checked" : ""} ${locked ? "disabled" : ""}> <b>Live trading</b> (OFF by default)</label> ${locked ? `<span class="pill bad">Locked until tomorrow (Brisbane) — daily loss limit hit ${esc(S.liveLockDay)}</span>` : ""}
       <p><b>Not financial advice.</b> Midas never signs: each swap is built with Jupiter and you sign it in Phantom. No seed phrase or private key is ever asked for or stored.</p>
       <div class="row"><label>Per-trade cap % of wallet SOL <input id="s-cap" type="number" min="0.1" max="100" step="0.1" value="${st.capPct}"></label><label>Daily loss limit % (10–15) <input id="s-dl" type="number" min="${M.live.dailyLossMin}" max="${M.live.dailyLossMax}" step="0.5" value="${st.dailyLossPct}"></label><label>Slippage bps <input id="s-slip" type="number" min="10" max="2000" value="${st.slippageBps}"></label></div>
-      <p>Wallet: ${W.wallet.address ? `<code id="addr">${esc(W.wallet.address)}</code> <span class="pill">${esc(W.wallet.provider)}</span>` : '<span class="mut" id="addr">not connected</span>'}<br>
-      Balance: ${walletSol === null ? U : walletSol.toFixed(4) + " SOL"}${solPrice && walletSol !== null ? " (" + usd(walletSol * solPrice) + ")" : ""} · cap/trade: ${cap === null ? U : cap.toFixed(4) + " SOL"} · today's loss: ${dailyLossSol().toFixed(4)} / ${lim === null ? U : lim.toFixed(4)} SOL</p>
-      <div class="row"><button class="btn" id="connect">${W.wallet.address ? "Refresh balance" : "Connect Phantom"}</button>${W.wallet.address ? '<button class="btn ghost" id="disconnect">Disconnect</button>' : ""}</div></div>
+      ${walletHelp()}
+      <p>Cap/trade: ${cap === null ? U : cap.toFixed(4) + " SOL"} · today's loss: ${dailyLossSol().toFixed(4)} / ${lim === null ? U : lim.toFixed(4)} SOL</p>
+      </div>
      <div class="panel"><h2>Connection</h2><label>Phantom Portal App ID (optional; only for Google/Apple login) <input id="s-app" style="width:260px" value="${esc(st.appId)}" placeholder="from phantom.com/portal"></label><br><label>Solana RPC (read-only) <input id="s-rpc" style="width:300px" value="${esc(st.rpc)}"></label></div>`;
   }
 }
@@ -253,6 +293,7 @@ document.addEventListener("click", async (e) => {
   if (t.id === "reset") { if (await ask("<p>Reset the paper portfolio to $1,000 and clear the paper log?</p>", "Reset")) { Object.assign(S, { cash: M.paper.startUsd, start: M.paper.startUsd, positions: [], log: [], entered: {} }); save(); render(); } return; }
   if (t.id === "connect") { try { if (!W.wallet.address) { setStatus("Waiting for Phantom…"); await W.connect(S.settings.appId.trim()); } await refreshWallet(); } catch (err) { toast("Phantom: " + err.message); } render(); return; }
   if (t.id === "disconnect") { await W.disconnect(); walletSol = null; S.settings.live = false; save(); render(); }
+  if (t.id === "openPhantom") return; // plain link (deeplink)
 });
 document.addEventListener("change", async (e) => {
   const t = e.target, st = S.settings, num = (v, lo, hi, d) => { v = +v; return isNaN(v) ? d : Math.min(hi, Math.max(lo, v)); };
@@ -278,9 +319,17 @@ document.addEventListener("change", async (e) => {
 });
 // ---------- boot ----------
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW", e));
-render(); rollDay();
+render(); rollDay(); renderBadge();
+// Wallet: silent detection on load (injected provider onlyIfTrusted, then SDK autoConnect if an App ID is set) + events.
+let lastAddr = null;
+W.onWalletChange(() => { if (W.wallet.address !== lastAddr) { lastAddr = W.wallet.address; walletSol = null; L.watchWallet(W.wallet.address, S.settings.rpc); if (W.wallet.address) refreshWallet(true); } renderBadge(); render(); });
+W.detect(S.settings.appId.trim()).catch((e) => console.warn("wallet detect", e)).finally(() => { renderBadge(); if (tab === "live" || tab === "settings") render(); });
+setInterval(() => !document.hidden && W.wallet.address && refreshWallet(true), 30e3);
+const livePaint = () => { if (tab !== "live") return; const a = $("#txPanel"), b = $("#mktPanel"); if (a) a.innerHTML = txRows(); if (b) b.innerHTML = mktRows(); };
+L.txFeed.onUpdate = livePaint; L.mkt.onUpdate = livePaint;
+L.startMarket(() => [...coins.values()].filter((c) => c.heat && c.pair).sort((a, b) => b.heat.score - a.heat.score));
 A.argusFeed().then((f) => { feed = f || false; if (tab === "signals") render(); refresh(); });
 setInterval(() => !document.hidden && refresh(), C.refreshSec * 1000);
 setInterval(() => !document.hidden && tickPrices(), M.priceTickSec * 1000);
 setInterval(() => { if (S.settings.live) enforceDaily(); rollDay(); }, 60e3);
-window.__midas = { S, coins, paperBuy, paperSell };
+window.__midas = { S, coins, paperBuy, paperSell, W, L, watch: (a) => L.watchWallet(a, S.settings.rpc) }; // watch(addr): read-only test hook for the tx panel

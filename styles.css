@@ -18,3 +18,4 @@ dialog{background:var(--card);color:var(--tx);border:1px solid var(--gold);borde
 #toasts{position:fixed;bottom:12px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:9}.toast{background:var(--card);border:1px solid var(--gold);padding:8px 12px;border-radius:8px;max-width:320px;cursor:pointer}
 #install-hint{display:flex;gap:8px;justify-content:space-between;padding:8px 14px;background:var(--card)}.hidden{display:none!important}.install-btn.hidden{display:none}
 footer{color:var(--mut);font-size:12px;padding:16px;text-align:center}footer a,a{color:var(--gold2)}code{word-break:break-all}
+.wbox{border:1px solid var(--line);border-radius:10px;padding:8px;margin:6px 0}.wbox.ok{border-color:var(--good)}.big-pill{font-size:14px;font-weight:700}#walletBadge{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#txTable td,#mktTable td{font-size:12px}

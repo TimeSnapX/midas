@@ -1,6 +1,6 @@
 {
  "start_balance": 1000,
- "cash": 766.67,
+ "cash": 565.21,
  "created": "2026-10-24 07:12 AEST",
  "mode": "PAPER",
  "positions": [
@@ -54,6 +54,46 @@
    "vol24h": 6448906.99,
    "status": "open",
    "url": "https://dexscreener.com/solana/dnm2wasf4pp9xivpucrwm3cv9anasuugeganqudtlgs"
+  },
+  {
+   "timestamp": "2026-10-24 07:49 AEST",
+   "symbol": "YMBCOIN",
+   "mint": "J8NLpWf52NrMMXLEhf26NUVrpst8Xm3CS91KZ5RPpump",
+   "entry": 0.0006726,
+   "size_usd": 100.73,
+   "qty": 149762.12,
+   "stop": 0.00050445,
+   "tp1": 0.00107616,
+   "tp2": 0.00107616,
+   "risk_usd": 25.18,
+   "risk_score": 12,
+   "liquidity": 70892.78,
+   "vol24h": null,
+   "status": "open",
+   "url": "https://dexscreener.com/solana/gupfu34b2msswpkubvefuets8rgwmux25on95gxbabhb",
+   "heat": 80
+  },
+  {
+   "timestamp": "2026-10-24 07:49 AEST",
+   "symbol": "BITCHES",
+   "mint": "26Aawi1sZSNR8Raumc3hdvKbke6RJ1dYaKqgrHXopump",
+   "entry": 0.001936,
+   "size_usd": 100.73,
+   "qty": 52029.96,
+   "stop": 0.001452,
+   "tp1": 0.0030976,
+   "tp2": 0.0030976,
+   "risk_usd": 25.18,
+   "risk_score": 5,
+   "liquidity": 123508.85,
+   "vol24h": null,
+   "status": "open",
+   "url": "https://dexscreener.com/solana/2powdqnwds3d6buxrrmpzucsdakppnotacde64wzp7uh",
+   "heat": 75
   }
- ]
+ ],
+ "last_mark": {
+  "at": "2026-10-24 07:49 AEST",
+  "equity": 1007.34
+ }
 }

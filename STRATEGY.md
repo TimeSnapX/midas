@@ -36,3 +36,9 @@ An **Argus pick is a signal, not an override**: it is ranked first among candida
 2. Live trading is **OFF by default**; turning it on needs an explicit confirm dialog with a risk acknowledgement.
 3. Every live swap is built with the free Jupiter quote/swap API and **signed by you in Phantom**. Midas never auto-signs, never asks for a seed phrase or private key, and stores no keys.
 4. **Daily loss limit: 12%** of the wallet's SOL balance at the first reading of the Brisbane day (allowed 10–15%). Losses = realized SOL losses today + mark-to-market losses on live positions opened today. When hit: live switches off, the app is in paper mode, and live is **locked until the next day in Australia/Brisbane time**. Exit sells of existing live positions stay possible (they still need your signature).
+
+## 7. Wallet connection and live feeds (v2)
+- On load Midas silently checks for Phantom's injected provider (`window.phantom.solana` / `window.solana`) with `connect({ onlyIfTrusted: true })`, and, if a Portal App ID is set, the SDK's `autoConnect()`. It listens for `connect`, `disconnect` and `accountChanged`.
+- Chrome on Android cannot see the Phantom mobile app's wallet. Use **Open in Phantom** (opens Midas in Phantom's in-app browser), or Google/Apple embedded login with an App ID. Seed phrases and private keys are never asked for or stored.
+- Wallet transactions: RPC websocket `logsSubscribe` (publicnode) triggers fetches; `getSignaturesForAddress` + `getTransaction` (jsonParsed) every 8 s (30 s while the websocket is open), with exponential backoff up to 60 s. Classified from balance changes; unclear = "unknown".
+- Market trades: GeckoTerminal pool trades for the top 5 watched coins, one pool every 10 s, through a limiter shared with the scanner (15 req/min, 30 s pause after a 429).

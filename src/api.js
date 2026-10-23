@@ -1,13 +1,26 @@
 // Keyless public APIs, called straight from the browser. Every field that an API does not return stays null ("unknown").
 import { CONFIG as C } from "./config.js";
 export const apiStatus = {}; // name -> {ok, at, err}
+// One shared GeckoTerminal limiter (free tier ~30 req/min): scanner, OHLCV and the market-trades feed all queue here.
+const GT = { max: 15, win: 60e3, stamps: [], pauseUntil: 0 };
+export const gtLimiter = GT;
+async function gtSlot() {
+  for (;;) {
+    const now = Date.now(); GT.stamps = GT.stamps.filter((t) => now - t < GT.win);
+    if (now >= GT.pauseUntil && GT.stamps.length < GT.max) { GT.stamps.push(now); return; }
+    await new Promise((r) => setTimeout(r, Math.max(250, GT.pauseUntil - now, GT.stamps.length ? GT.win - (now - GT.stamps[0]) + 50 : 250)));
+  }
+}
 async function get(name, url) {
+  if (url.includes("api.geckoterminal.com")) await gtSlot();
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), C.timeoutMs);
   try {
     const r = await fetch(url, { signal: ctl.signal, cache: "no-store", headers: { accept: "application/json" } });
+    if (r.status === 429 && url.includes("api.geckoterminal.com")) GT.pauseUntil = Date.now() + 30e3; // back off 30 s
     if (!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json(); apiStatus[name] = { ok: true, at: Date.now() }; return j;
-  } catch (e) { apiStatus[name] = { ok: false, at: Date.now(), err: e.name === "AbortError" ? "timeout" : e.message }; return null; }
+  } catch (e) { if (url.includes("api.geckoterminal.com") && e.name !== "AbortError") GT.pauseUntil = Math.max(GT.pauseUntil, Date.now() + 30e3); // 429s arrive without CORS headers => TypeError
+    apiStatus[name] = { ok: false, at: Date.now(), err: e.name === "AbortError" ? "timeout" : e.message }; return null; }
   finally { clearTimeout(t); }
 }
 const n = (v) => (v === null || v === undefined || v === "" || isNaN(+v) ? null : +v);
@@ -75,3 +88,11 @@ export async function ohlcv(pair) {
   return (j?.data?.attributes?.ohlcv_list || []).map((r) => ({ t: r[0] * 1000, o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] })).reverse();
 }
 export async function argusFeed() { for (const u of C.feedUrls) { const j = await get("Argus × Hades feed", u + "?t=" + Date.now()); if (j) { j._url = u; return j; } } return null; }
+// Recent trades on one pool (GeckoTerminal, keyless). base = the watched coin's mint, so buy/sell and price are from its side.
+export async function gtTrades(pool, base) {
+  const j = await get("GeckoTerminal trades", `https://api.geckoterminal.com/api/v2/networks/solana/pools/${pool}/trades`);
+  if (!j) return null;
+  return (j.data || []).map((d) => { const a = d.attributes || {}; const isTo = a.to_token_address === base;
+    return { id: d.id, sig: a.tx_hash || null, t: Date.parse(a.block_timestamp) || null, kind: a.kind === "buy" || a.kind === "sell" ? a.kind : null,
+      usd: n(a.volume_in_usd), price: n(isTo ? a.price_to_in_usd : a.price_from_in_usd), amount: n(isTo ? a.to_token_amount : a.from_token_amount), trader: a.tx_from_address || null }; });
+}
